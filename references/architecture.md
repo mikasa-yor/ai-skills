@@ -54,3 +54,86 @@ Discover the existing architecture first:
 6. Avoid unrelated refactors.
 
 Architecture should make dependency direction and ownership easy to understand.
+
+## Examples
+
+### Dependency direction: lower layers never import higher ones
+
+```ts
+// BAD: a util imports from a component (lower layer -> higher layer)
+// utils/formatPrice.ts
+import { CurrencyContext } from '../components/CurrencyProvider';
+
+// GOOD: pass what the util needs as an argument
+// utils/formatPrice.ts
+export function formatPrice(amount: number, currency: string) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount);
+}
+```
+
+```ts
+// BAD: circular dependency
+// api/orders.ts      -> imports  hooks/useOrderFilters.ts
+// hooks/useOrderFilters.ts -> imports  api/orders.ts
+
+// GOOD: shared contract moves down to a lower layer both can import
+// types/order.ts       <- imported by api/orders.ts and hooks/useOrderFilters.ts
+```
+
+### Responsibilities: keep each layer to its job
+
+```tsx
+// BAD: component owns backend communication details
+function OrderList() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  useEffect(() => {
+    fetch('/api/orders', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then(setOrders);
+  }, []);
+  return <Table rows={orders} />;
+}
+
+// GOOD: API layer owns the request, hook exposes it, component renders
+// api/orders.ts
+export async function getOrders(): Promise<Order[]> {
+  const res = await http.get('/orders');
+  return res.data;
+}
+
+// hooks/useOrders.ts
+export const useOrders = () => useQuery({ queryKey: ['orders'], queryFn: getOrders });
+
+// components/OrderList.tsx
+function OrderList() {
+  const { data = [] } = useOrders();
+  return <Table rows={data} />;
+}
+```
+
+### Discover before introducing
+
+```text
+BAD:  Task: "add a Coupons admin list."
+      Create a new `useTableState` hook and a custom pagination component
+      without looking at how Orders and Users lists already do it.
+
+GOOD: Find the closest existing list (Orders). Reuse its table, filter, and
+      pagination pattern. Add only what Coupons genuinely needs on top.
+```
+
+### Change the existing source instead of creating a second one
+
+```ts
+// BAD: new constants file duplicating an existing one
+// constants/orderStatusLabels.ts   (new)
+// constants/orderStatus.ts         (already has the labels)
+
+// GOOD: extend the authoritative definition
+// constants/orderStatus.ts
+export const orderStatusMeta = {
+  pending: { title: 'Pending' },
+  paid: { title: 'Paid' },
+  refunded: { title: 'Refunded' }, // added here
+};
+```

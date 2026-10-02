@@ -80,3 +80,168 @@ Use it when function identity has a meaningful purpose, such as:
 - a memoized child depends on stable callback identity;
 - a hook dependency requires stable identity;
 - an external integration requires stable identity.
+
+## Examples
+
+### Derived state: compute, don't mirror
+
+```tsx
+// BAD: useEffect + useState to derive a value
+const [fullName, setFullName] = useState('');
+useEffect(() => {
+  setFullName(`${firstName} ${lastName}`);
+}, [firstName, lastName]);
+
+// GOOD: compute directly
+const fullName = `${firstName} ${lastName}`;
+```
+
+```tsx
+// BAD: filtered list kept as separate state, extra render, can go stale
+const [visible, setVisible] = useState<Item[]>([]);
+useEffect(() => {
+  setVisible(items.filter((i) => i.active));
+}, [items]);
+
+// GOOD: derived from the source; useMemo names a meaningful computation
+const activeItems = useMemo(() => items.filter((i) => i.active), [items]);
+```
+
+### Effects are for external systems
+
+```tsx
+// BAD: fetching server data with effect + state
+const [user, setUser] = useState<User>();
+useEffect(() => {
+  fetchUser(id).then(setUser);
+}, [id]);
+
+// GOOD: React Query owns server state
+const { data: user } = useQuery({ queryKey: ['user', id], queryFn: () => fetchUser(id) });
+```
+
+```tsx
+// GOOD: effect synchronizes with a browser API and cleans up
+useEffect(() => {
+  const onResize = () => setWidth(window.innerWidth);
+  window.addEventListener('resize', onResize);
+  return () => window.removeEventListener('resize', onResize);
+}, []);
+```
+
+### Dependencies must be honest
+
+```tsx
+// BAD: lint suppressed to change when the effect runs
+useEffect(() => {
+  track(pageId, userId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [pageId]);
+
+// GOOD: deps match what the effect uses
+useEffect(() => {
+  track(pageId, userId);
+}, [pageId, userId]);
+```
+
+### Cleanup abortable work
+
+```tsx
+// BAD: stale response can overwrite newer one
+useEffect(() => {
+  fetch(`/api/search?q=${query}`).then((r) => r.json()).then(setResults);
+}, [query]);
+
+// GOOD: abort work owned by the effect
+useEffect(() => {
+  const controller = new AbortController();
+  fetch(`/api/search?q=${query}`, { signal: controller.signal })
+    .then((r) => r.json())
+    .then(setResults)
+    .catch((e) => {
+      if (e.name !== 'AbortError') throw e;
+    });
+  return () => controller.abort();
+}, [query]);
+```
+
+### useMemo: meaningful vs trivial
+
+```tsx
+// BAD: trivial expression memoized for no reason
+const total = useMemo(() => price * quantity, [price, quantity]);
+
+// GOOD: plain expression
+const total = price * quantity;
+
+// GOOD: multi-step computation grouped under an intention-revealing name
+const overdueInvoiceTotal = useMemo(
+  () =>
+    invoices
+      .filter((i) => i.dueDate < today && !i.paid)
+      .reduce((sum, i) => sum + i.amount, 0),
+  [invoices, today],
+);
+```
+
+### useCallback: only when identity matters
+
+```tsx
+// BAD: mechanical, nothing depends on identity
+const handleClick = useCallback(() => setOpen(true), []);
+return <button onClick={handleClick} />;
+
+// GOOD: plain handler
+return <button onClick={() => setOpen(true)} />;
+
+// GOOD: memoized child relies on stable identity
+const handleSelect = useCallback((id: string) => select(id), [select]);
+return <MemoizedList onSelect={handleSelect} />;
+```
+
+### Render purity
+
+```tsx
+// BAD: side effect during render
+function Counter({ id }: { id: string }) {
+  analytics.track('viewed', id);
+  return <div>{id}</div>;
+}
+
+// GOOD: side effect in an effect (or event handler)
+function Counter({ id }: { id: string }) {
+  useEffect(() => {
+    analytics.track('viewed', id);
+  }, [id]);
+  return <div>{id}</div>;
+}
+```
+
+### Refs are not data flow
+
+```tsx
+// BAD: ref used to pass data between renders/components
+const selectedIdRef = useRef<string>();
+const onSelect = (id: string) => {
+  selectedIdRef.current = id; // UI won't update
+};
+
+// GOOD: state for data, ref for DOM
+const [selectedId, setSelectedId] = useState<string>();
+const inputRef = useRef<HTMLInputElement>(null);
+inputRef.current?.focus();
+```
+
+### Wrapper components forward props
+
+```tsx
+// BAD: redefines the prop surface, drops everything else
+type Props = { value: string; onChange: (v: string) => void; placeholder?: string };
+const SearchInput = ({ value, onChange, placeholder }: Props) => (
+  <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+);
+
+// GOOD: forward underlying props
+type SearchInputProps = React.ComponentProps<typeof Input>;
+const SearchInput = (props: SearchInputProps) => <Input {...props} />;
+```

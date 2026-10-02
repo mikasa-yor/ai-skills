@@ -74,3 +74,150 @@ Use comments for:
 - compatibility or safety considerations.
 
 Do not add comments that merely narrate the next line of code.
+
+## Examples
+
+### Immutability
+
+```ts
+// BAD: let + mutation
+let label = 'Unknown';
+if (status === 'paid') label = 'Paid';
+const next = { ...order };
+delete next.note;
+
+// GOOD: direct expression, immutable update
+const label = status === 'paid' ? 'Paid' : 'Unknown';
+const { note, ...next } = order;
+```
+
+### Guard clauses
+
+```ts
+// BAD: nested
+function getDiscount(user?: User) {
+  if (user) {
+    if (user.isActive) {
+      return user.discount;
+    }
+  }
+  return 0;
+}
+
+// GOOD: early returns
+function getDiscount(user?: User) {
+  if (!user?.isActive) return 0;
+  return user.discount;
+}
+```
+
+### Parameters
+
+```ts
+// BAD: positional soup
+createInvoice(customerId, true, false, 'USD', 30);
+
+// GOOD: named object when more parameters are genuinely needed
+createInvoice({ customerId, sendEmail: true, draft: false, currency: 'USD', dueInDays: 30 });
+```
+
+### Control flow: pick the construct that fits
+
+```ts
+// BAD: forEach used to build a result, flag-based loop
+const ids: string[] = [];
+items.forEach((i) => ids.push(i.id));
+
+// GOOD: map transforms
+const ids = items.map((i) => i.id);
+
+// BAD: map/forEach cannot break or await sequentially
+items.forEach(async (i) => await save(i));
+
+// GOOD: for...of for sequential await / break
+for (const item of items) {
+  await save(item);
+}
+```
+
+### Magic values
+
+```ts
+// BAD: meaning is hidden
+if (password.length < 8) {}
+setTimeout(refresh, 300000);
+
+// GOOD: name business rules
+const MIN_PASSWORD_LENGTH = 8;
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
+// GOOD: obvious literals stay literal
+const isFirst = index === 0;
+```
+
+### Errors
+
+```ts
+// BAD: swallowed, hides failure behind a default
+async function getUser(id: string) {
+  try {
+    return await api.get(`/users/${id}`);
+  } catch {
+    return null;
+  }
+}
+
+// GOOD: log meaningfully and rethrow so React Query / caller decides
+async function getUser(id: string) {
+  try {
+    return await api.get(`/users/${id}`);
+  } catch (error) {
+    console.error('Failed to fetch user', { id, error });
+    throw error;
+  }
+}
+```
+
+### JSON parsing
+
+```ts
+// BAD: throws on bad input, and the generic validates nothing
+const settings = JSON.parse(raw) as Settings;
+
+// GOOD: handle failure intentionally, validate shape
+function parseSettings(raw: string): Settings {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error('Settings JSON is malformed', { cause: error });
+  }
+  if (!isSettings(parsed)) {
+    throw new Error('Settings JSON has unexpected shape');
+  }
+  return parsed;
+}
+```
+
+### Comments: why, not what
+
+```ts
+// BAD: narrates the code
+// increment retry count
+retries += 1;
+
+// GOOD: explains a non-obvious constraint
+// The payment gateway rejects retries within 2s of the previous attempt.
+const RETRY_DELAY_MS = 2000;
+```
+
+### Reuse by meaning, not by look
+
+```ts
+// BAD: merged because the code looks alike, but the rules are unrelated
+const clampTo100 = (n: number) => Math.min(n, 100); // used for both discount % and page size
+
+// GOOD: separate concepts, separate rules (they can change independently)
+const MAX_DISCOUNT_PERCENT = 100;
+const MAX_PAGE_SIZE = 100;
+```

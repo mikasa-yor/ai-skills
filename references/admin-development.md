@@ -196,3 +196,203 @@ When no product requirement specifies otherwise, prefer the established project-
 - form behavior.
 
 Do not introduce a one-off interaction pattern without a concrete reason.
+
+## Examples
+
+### Enum/status display: define metadata once
+
+```tsx
+// BAD: raw enum shown, and labels re-mapped per surface
+<td>{order.status}</td>                          // "PAID_PENDING_SHIP"
+// OrderTable.tsx
+{ status === 'paid' ? 'Paid' : 'Pending' }
+// OrderDetail.tsx
+{ status === 'paid' ? 'Paid!' : 'Waiting' }      // drifted
+
+// GOOD: one metadata map reused by table, filter, form, detail, badge
+const orderStatusMeta = {
+  [OrderStatus.Pending]: { title: 'Pending' },
+  [OrderStatus.Paid]: { title: 'Paid' },
+} satisfies Record<OrderStatus, OrderStatusMeta>;
+
+<td>{orderStatusMeta[order.status].title}</td>
+```
+
+### Shared selector component
+
+```tsx
+// BAD: enum-to-option mapping duplicated in each form
+// OrderFilterForm.tsx
+<Select options={[{ value: 'pending', label: 'Pending' }, { value: 'paid', label: 'Paid' }]} />
+// OrderEditForm.tsx
+<Select options={[{ value: 'pending', label: 'Pending' }, { value: 'paid', label: 'Paid' }]} />
+
+// GOOD: one reusable component, forwards underlying Select props
+type OrderStatusSelectProps = Omit<React.ComponentProps<typeof Select>, 'options'>;
+
+const OrderStatusSelect = (props: OrderStatusSelectProps) => (
+  <Select
+    {...props}
+    options={Object.values(OrderStatus).map((value) => ({
+      value,
+      label: orderStatusMeta[value].title,
+    }))}
+  />
+);
+```
+
+### Filters reset pagination
+
+```tsx
+// BAD: user is on page 5, applies a filter, sees an empty table
+const onSearch = (values: Filters) => setFilters(values);
+
+// GOOD: changing filters returns to the first page
+const onSearch = (values: Filters) => {
+  setFilters(values);
+  setPage(1);
+};
+```
+
+### Search / Reset form
+
+```tsx
+// BAD: no way back to the initial state, no pending feedback
+<form onSubmit={onSearch}>
+  <Input name="keyword" />
+  <button type="submit">Go</button>
+</form>
+
+// GOOD: Search + Reset, predictable initial values, pending state
+<form onSubmit={onSearch}>
+  <Input name="keyword" defaultValue={initialFilters.keyword} />
+  <button type="submit" disabled={isFetching}>Search</button>
+  <button type="button" onClick={() => onReset(initialFilters)}>Reset</button>
+</form>
+```
+
+### Dates: centralize the format
+
+```tsx
+// BAD: each table formats dates its own way
+<td>{new Date(o.createdAt).toLocaleDateString()}</td>
+<td>{dayjs(u.joinedAt).format('DD/MM/YY')}</td>
+
+// GOOD: one project-wide formatter
+// utils/formatDateTime.ts
+export const formatDateTime = (value: string | Date) => dayjs(value).format('YYYY-MM-DD HH:mm');
+
+<td>{formatDateTime(o.createdAt)}</td>
+<td>{formatDateTime(u.joinedAt)}</td>
+```
+
+### Loading, empty, and error states
+
+```tsx
+// BAD: unexplained blank table
+return <Table rows={data ?? []} />;
+
+// GOOD: every state is deliberate
+if (isLoading) return <TableSkeleton />;
+if (isError) return <ErrorState onRetry={refetch} />;
+if (data.length === 0) {
+  return hasActiveFilters
+    ? <EmptyState title="No results match your filters" action={<button onClick={reset}>Reset filters</button>} />
+    : <EmptyState title="No orders yet" />;
+}
+return <Table rows={data} />;
+```
+
+### Mutations: pending state and server state ownership
+
+```tsx
+// BAD: double-submit possible, manual copy of server state, no feedback
+const onSave = async () => {
+  const updated = await updateOrder(values);
+  setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+};
+<button onClick={onSave}>Save</button>
+
+// GOOD: pending disables the button, cache invalidated, user gets feedback
+const queryClient = useQueryClient();
+const { mutate, isPending } = useMutation({
+  mutationFn: updateOrder,
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ['orders'] });
+    toast.success('Order updated');
+  },
+  onError: () => toast.error('Failed to update order'),
+});
+<button onClick={() => mutate(values)} disabled={isPending}>Save</button>
+```
+
+### Destructive actions
+
+```tsx
+// BAD: immediate delete, ambiguous target
+<button onClick={() => deleteOrder(order.id)}>Delete</button>
+
+// GOOD: project's confirmation pattern, names the target, blocks double submit
+<ConfirmDialog
+  title={`Delete order #${order.code}?`}
+  description="This action cannot be undone."
+  confirmLabel="Delete"
+  isPending={isDeleting}
+  onConfirm={() => deleteOrder(order.id)}
+/>
+```
+
+### Bulk actions
+
+```tsx
+// BAD: selection is invisible, partial failures are ignored
+<button onClick={() => bulkDelete(selectedIds)}>Delete</button>
+
+// GOOD: explicit count, confirmation, and deliberate partial-failure handling
+<button disabled={selectedIds.length === 0} onClick={openConfirm}>
+  Delete {selectedIds.length} selected
+</button>
+
+// after completion
+const { succeeded, failed } = await bulkDelete(selectedIds);
+queryClient.invalidateQueries({ queryKey: ['orders'] });
+if (failed.length > 0) {
+  toast.warning(`${succeeded.length} deleted, ${failed.length} failed`);
+}
+```
+
+### Permissions
+
+```tsx
+// BAD: assumes hiding the button is authorization
+{canDelete && <button onClick={() => deleteOrder(id)}>Delete</button>}
+// ...while the API endpoint has no permission check
+
+// GOOD: UI hides for UX, backend still enforces authorization
+// Frontend: hide/disable the button via the project's permission helper.
+// Backend:  DELETE /orders/:id verifies the caller's permission regardless of the UI.
+// Frontend also handles the 403 response gracefully (e.g. toast + no cache change).
+```
+
+### Detail views reuse display semantics
+
+```tsx
+// BAD: detail page re-implements formatting
+<span>{order.status === 'paid' ? 'Paid' : 'Pending'}</span>
+<span>{new Date(order.createdAt).toLocaleString()}</span>
+
+// GOOD: same metadata and formatter as the table
+<span>{orderStatusMeta[order.status].title}</span>
+<span>{formatDateTime(order.createdAt)}</span>
+```
+
+### Discover before creating (consistency rule)
+
+```text
+BAD:  Build the Coupons page with its own "Clear" button, a different
+      date format, and a bespoke delete modal.
+
+GOOD: Open the Orders page, copy its Search/Reset behavior, date formatter,
+      status badge, and ConfirmDialog usage. Deviate only for a concrete
+      product requirement.
+```
