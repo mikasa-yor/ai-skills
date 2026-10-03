@@ -27,6 +27,7 @@ Load only the relevant reference when needed:
 - `references/react.md` — components, hooks, effects, memoization, derived state.
 - `references/state-management.md` — local state, Jotai, React Query, state ownership.
 - `references/architecture.md` — layers and dependency direction.
+- `references/reusability.md` — generic-first extraction, looking up existing shared helpers, and splitting flag-driven functions.
 - `references/testing.md` — practical testing and edge cases.
 - `references/admin-development.md` — admin tables, forms, filters, CRUD, display semantics, mutations.
 
@@ -34,10 +35,12 @@ Load only the relevant reference when needed:
 
 1. Understand the task and acceptance criteria.
 2. Discover nearby existing implementations and project conventions.
-3. Identify the authoritative source of each piece of state/business logic.
-4. Prefer changing or reusing an existing source over creating a second one.
-5. Keep unrelated refactors out of scope.
-6. Validate behavior with relevant checks.
+3. Look for existing generic helpers (`@/utils`, `@/hooks`, `@/components`) before writing new ones. Reuse them. If one is business-specific or misplaced, rename it generically and move it to a shared place.
+4. Foresee reuse: put generic logic in a shared place with a generic name, unless that makes the code much more complicated. Don't hide different logic behind flags or type params.
+5. Identify the authoritative source of each piece of state/business logic.
+6. Prefer changing or reusing an existing source over creating a second one.
+7. Keep unrelated refactors out of scope.
+8. Validate behavior with relevant checks.
 
 ## Examples
 
@@ -102,4 +105,20 @@ GOOD:
   4. Reuse that badge; extend `orderStatusMeta` only if a color is missing.
   5. Out of scope: no renames, no reformatting, no unrelated refactors.
   6. Validate: run typecheck, lint, and the related tests.
+```
+
+### Look up, then generalize
+
+```text
+Task: "Show the price on the return-refund page."
+
+BAD:
+  Write `formatReturnPrice` inside ReturnPrice.tsx.
+
+GOOD:
+  1. Look in `@/utils` (`currency.ts`, `price.ts`) for an existing formatter.
+  2. Found `formatOrderPrice` in `features/orders/`: same Intl logic, specific name.
+  3. Rename it `formatPriceWithCurrency`, move it to `@/utils/currency.ts`,
+     update its callers, and use it in ReturnPrice.
+  4. Don't touch unrelated code.
 ```
